@@ -1,3 +1,4 @@
+use simple_server::ThreadPool;
 use std::{
     fs,
     io::{prelude::*, BufReader},
@@ -5,7 +6,6 @@ use std::{
     thread,
     time::Duration,
 };
-use simple_server::ThreadPool;
 
 fn main() {
     // this listener is a tcp listener binded by the determined port
@@ -17,7 +17,7 @@ fn main() {
 
         pool.execute(|| {
             handle_connection(stream);
-        });   
+        });
     }
 }
 
@@ -29,7 +29,7 @@ fn handle_connection(mut stream: TcpStream) {
     let (status_line, filename) = match &request_line[..] {
         "GET / HTTP/1.1" => ("HTTP/1.1 200 OK", "hello.html"),
         "GET /sleep HTTP/1.1" => {
-            thread::sleep(Duration::from_secs(5));
+            thread::sleep(Duration::from_secs(10));
             ("HTTP/1.1 200 OK", "hello.html")
         }
         _ => ("HTTP/1.1 404 NOT FOUND", "404.html"),
