@@ -12,13 +12,16 @@ fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
     let pool = ThreadPool::new(4);
     // a for loop on connections (connection trials) received on the listens
-    for stream in listener.incoming() {
+    // take(2) to demonstrate Shutting down after taking two requests
+    for stream in listener.incoming().take(2) {
         let stream = stream.unwrap();
 
         pool.execute(|| {
             handle_connection(stream);
         });
     }
+
+    println!("Shutting down.");
 }
 
 fn handle_connection(mut stream: TcpStream) {

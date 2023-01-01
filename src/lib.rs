@@ -13,12 +13,8 @@ use std::{
 /// sender: is the sender part of the channel that's used to communicate with threads
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: Option<mpsc::Sender<Job>>,
 }
-
-/// Job type holds the closure we want to send to the worker
-/// type alisa fpr a Box trait object that holds the type that excute function recieves
-type Job = Box<dyn FnOnce() + Send + 'static>;
 
 impl ThreadPool {
     /// Create new ThreadPool
@@ -49,7 +45,10 @@ impl ThreadPool {
             workers.push(Worker::new(id, Arc::clone(&receiver)));
         }
 
-        ThreadPool { workers, sender }
+        ThreadPool {
+            workers,
+            sender: Some(sender),
+        }
     }
 
     /// execute method will send a job from the threadpool [sending end]
@@ -64,9 +63,31 @@ impl ThreadPool {
     {
         let job = Box::new(f);
 
-        self.sender.send(job).unwrap();
+        self.sender.as_ref().unwrap().send(job).unwrap();
     }
 }
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        // drop the send to close the channel so that the reciever will know that
+        // there are no more messages
+        // and the infinite loop waiting for incomming jobs will be invalid
+        drop(self.sender.take());
+
+        for worker in &mut self.workers {
+            println!("Shutting down worker {}", worker.id);
+
+            if let Some(thread) = worker.thread.take() {
+                // make the thread complete the job before it's dropped
+                thread.join().unwrap();
+            }
+        }
+    }
+}
+
+/// Job type holds the closure we want to send to the worker
+/// type alisa fpr a Box trait object that holds the type that excute function recieves
+type Job = Box<dyn FnOnce() + Send + 'static>;
 
 /// Worker Struct is Responsible for Sending Code from the ThreadPool to a Thread
 /// because thread::spawn wanna give the thread a code to execute as soon as the thread is created
@@ -76,7 +97,7 @@ impl ThreadPool {
 /// and has a method that will take a closure of code to run and send it to the alreading running thread for excecution
 struct Worker {
     id: usize,
-    thread: thread::JoinHandle<()>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 impl Worker {
     fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Self {
@@ -86,19 +107,29 @@ impl Worker {
             // which might fail if the thread holding the lock panicked rather than releasing the
             // lock
             // then call recv to receive a job from the channel
-            // the call unwrap to panic if the there are errors happened while receiving the job
-            // which might happen if the sending thread shuts down for any reason
             // the call to recv blocks until a job becomes available
-            let job = receiver
+            let message = receiver
                 .lock()
                 .expect("mutex is in poisoned state, which can happen if some other thread panicked while holding the lock rather than releasing the lock")
-                .recv()
-                .expect("the thread holding the sending side of the channel might have shut down");
+                .recv();
 
-            println!("Worker {id} got a job; executing.");
+            match message {
+                // the channel is open and receiving messages
+                Ok(job) => {
+                    println!("Worker {id} got a job; executing.");
 
-            job();
+                    job();
+                }
+                // the channel is closed by dropping the sender for whatever reason
+                Err(_) => {
+                    println!("Worker {id} disconnected; Shutting down.");
+                    break;
+                }
+            }
         });
-        Worker { id, thread }
+        Worker {
+            id,
+            thread: Some(thread),
+        }
     }
 }
